@@ -4,11 +4,20 @@ import (
 	"context"
 	"github.com/go-redis/redis/v8"
 	"github.com/labstack/echo/v4"
+	middleware "github.com/labstack/echo/v4/middleware"
 	"strconv"
 	"sync"
 )
 
+type Content struct {
+	Post      string `redis:"post"`
+	Comments  string `redis:"comments"`
+	Realmojis string `redis:"realmojis"`
+	UpdatedAt string `redis:"updatedAt"`
+}
+
 var ctx = context.Background()
+var redisCmds = 250
 
 func getRedisSync(rdb *redis.Client) echo.HandlerFunc {
 	return func(c echo.Context) error {
@@ -24,16 +33,20 @@ func getRedisAsync(rdb *redis.Client) echo.HandlerFunc {
 	}
 }
 
+func getRedisPipeline(rdb *redis.Client) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		execRedisCmdPipe(rdb)
+		return c.String(200, "OK")
+	}
+}
+
 func getOk(c echo.Context) error {
 	return c.String(200, "OK")
 }
 
 func redisConnection() *redis.Client {
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "", // no password set
-		DB:       0,  // use default DB
-		PoolSize: 1000,
+		Addr: "localhost:6379",
 	})
 
 	return rdb
@@ -41,7 +54,7 @@ func redisConnection() *redis.Client {
 
 func execRedisCmdPipe(rdb *redis.Client) {
 	pipe := rdb.Pipeline()
-	for i := 0; i < 250; i++ {
+	for i := 0; i < redisCmds; i++ {
 		err := pipe.HMGet(ctx, "feeds-friends:"+strconv.Itoa(i), "post", "comments", "realmojis", "updatedAt").Err()
 		if err != nil {
 			panic(err)
@@ -53,16 +66,9 @@ func execRedisCmdPipe(rdb *redis.Client) {
 	}
 }
 
-type Content struct {
-	Post      string `redis:"post"`
-	Comments  string `redis:"comments"`
-	Realmojis string `redis:"realmojis"`
-	UpdatedAt string `redis:"updatedAt"`
-}
-
 func execRedisCmdAsync(rdb *redis.Client) {
 	var wg sync.WaitGroup
-	for i := 0; i < 250; i++ {
+	for i := 0; i < redisCmds; i++ {
 		wg.Add(1)
 		go func(i int) {
 			var content Content
@@ -91,12 +97,13 @@ func main() {
 
 	// Middleware
 	//e.Use(middleware.Logger())
-	//e.Use(middleware.Recover())
+	e.Use(middleware.Recover())
 
 	// Routes
 	e.GET("/ok", getOk)
 	e.GET("/redis-sync", getRedisSync(rdb))
 	e.GET("/redis-async", getRedisAsync(rdb))
+	e.GET("/redis-pipeline", getRedisPipeline(rdb))
 
 	// Start server
 	e.Logger.Fatal(e.Start(":8080"))
