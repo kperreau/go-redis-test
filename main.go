@@ -16,26 +16,25 @@ type Content struct {
 	UpdatedAt string `redis:"updatedAt"`
 }
 
-var ctx = context.Background()
 var redisCmds = 250
 
-func getRedisSync(rdb *redis.Client) echo.HandlerFunc {
+func getRedisSync(ctx context.Context, rdb *redis.Client) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		execRedisCmd(rdb)
+		execRedisCmd(ctx, rdb)
 		return c.String(200, "OK")
 	}
 }
 
-func getRedisAsync(rdb *redis.Client) echo.HandlerFunc {
+func getRedisAsync(ctx context.Context, rdb *redis.Client) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		execRedisCmdAsync(rdb)
+		execRedisCmdAsync(ctx, rdb)
 		return c.String(200, "OK")
 	}
 }
 
-func getRedisPipeline(rdb *redis.Client) echo.HandlerFunc {
+func getRedisPipeline(ctx context.Context, rdb *redis.Client) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		execRedisCmdPipe(rdb)
+		execRedisCmdPipe(ctx, rdb)
 		return c.String(200, "OK")
 	}
 }
@@ -52,7 +51,7 @@ func redisConnection() *redis.Client {
 	return rdb
 }
 
-func execRedisCmdPipe(rdb *redis.Client) {
+func execRedisCmdPipe(ctx context.Context, rdb *redis.Client) {
 	pipe := rdb.Pipeline()
 	for i := 0; i < redisCmds; i++ {
 		err := pipe.HMGet(ctx, "feeds-friends:"+strconv.Itoa(i), "post", "comments", "realmojis", "updatedAt").Err()
@@ -66,22 +65,22 @@ func execRedisCmdPipe(rdb *redis.Client) {
 	}
 }
 
-func execRedisCmdAsync(rdb *redis.Client) {
+func execRedisCmdAsync(ctx context.Context, rdb *redis.Client) {
 	var wg sync.WaitGroup
 	for i := 0; i < redisCmds; i++ {
 		wg.Add(1)
 		go func(i int) {
+			defer wg.Done()
 			var content Content
 			if err := rdb.HMGet(ctx, "feeds-friends:"+strconv.Itoa(i), "post", "comments", "realmojis", "updatedAt").Scan(&content); err != nil {
 				panic(err)
 			}
-			defer wg.Done()
 		}(i)
 	}
 	wg.Wait()
 }
 
-func execRedisCmd(rdb *redis.Client) {
+func execRedisCmd(ctx context.Context, rdb *redis.Client) {
 	for i := 0; i < 250; i++ {
 		var content Content
 		if err := rdb.HMGet(ctx, "feeds-friends:"+strconv.Itoa(i), "post", "comments", "realmojis", "updatedAt").Scan(&content); err != nil {
@@ -91,8 +90,8 @@ func execRedisCmd(rdb *redis.Client) {
 }
 
 func main() {
+	ctx := context.Background()
 	rdb := redisConnection()
-
 	e := echo.New()
 
 	// Middleware
@@ -101,11 +100,10 @@ func main() {
 
 	// Routes
 	e.GET("/ok", getOk)
-	e.GET("/redis-sync", getRedisSync(rdb))
-	e.GET("/redis-async", getRedisAsync(rdb))
-	e.GET("/redis-pipeline", getRedisPipeline(rdb))
+	e.GET("/redis-sync", getRedisSync(ctx, rdb))
+	e.GET("/redis-async", getRedisAsync(ctx, rdb))
+	e.GET("/redis-pipeline", getRedisPipeline(ctx, rdb))
 
 	// Start server
 	e.Logger.Fatal(e.Start(":8080"))
-
 }
